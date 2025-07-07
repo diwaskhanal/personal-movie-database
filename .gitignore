@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+pip-selfcheck.json
+
+# User-generated data and secrets
+movies/
+*.xlsx
+.env
+
+# OS-specific
+.DS_Store
+Thumbs.db

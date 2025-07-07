@@ -1,0 +1,6 @@
+requests
+python-dotenv
+termcolor
+pandas
+openpyxl
+PyYAML
