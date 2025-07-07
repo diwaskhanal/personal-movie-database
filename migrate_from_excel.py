@@ -1,23 +1,27 @@
 import os
-import requests
+import re
+import time
 import pandas as pd
+import requests
 from dotenv import load_dotenv
 from termcolor import colored
-import time
-import re
 
 # --- CONFIGURATION ---
+# Loads the TMDB_API_KEY from the .env file in your project folder.
 load_dotenv()
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 TMDB_API_URL = "https://api.themoviedb.org/3"
+
+# The folder where your final Markdown files will be saved.
 MOVIES_DIR = "movies"
-# --- FIX #1: Use the correct Excel file name ---
+
+# IMPORTANT: Set this to the exact name of your Excel file.
+# The file must be in the same directory as this script.
 EXCEL_FILE_PATH = "film.xlsx"
 
-# --- HELPER FUNCTIONS (No changes here) ---
 
 def get_movie_credits(movie_id):
-    """Efficiently fetches both the director and top actors."""
+    """Fetches the director and top 5 actors for a given movie ID from TMDB."""
     try:
         response = requests.get(f"{TMDB_API_URL}/movie/{movie_id}?api_key={TMDB_API_KEY}&append_to_response=credits")
         response.raise_for_status()
@@ -32,8 +36,10 @@ def get_movie_credits(movie_id):
     except requests.exceptions.RequestException:
         return "Unknown", []
 
+
 def create_markdown_file(details, director, actors, status):
-    """Creates a markdown file from the migrated data."""
+    """Creates a formatted Markdown file for a movie with YAML front matter."""
+    # Generate a filesystem-safe version of the movie title for the filename.
     safe_title = "".join(c for c in details['title'] if c.isalnum() or c in (' ', '-')).rstrip()
     year = details.get('release_date', '0000')[:4]
     filename = f"{safe_title.replace(' ', '-')}-{year}.md"
@@ -43,6 +49,7 @@ def create_markdown_file(details, director, actors, status):
         print(colored(f"  -> File '{filename}' already exists. Skipping.", "yellow"))
         return
 
+    # Define the structure of the YAML front matter.
     yaml_content = f"""
 title: "{details['title']}"
 year: {year}
@@ -63,6 +70,7 @@ spoken_languages:
 release_date: "{details.get('release_date', 'N/A')}"
 poster_path: "https://image.tmdb.org/t/p/w500{details.get('poster_path', '')}"
 """
+    # Combine YAML and Markdown body into the final file content.
     content = f"""---{yaml_content.strip()}
 ---
 ## Synopsis
@@ -74,11 +82,11 @@ poster_path: "https://image.tmdb.org/t/p/w500{details.get('poster_path', '')}"
         f.write(content)
     print(colored(f"  -> Successfully created file: {filename}", "green"))
 
-# --- MAIN MIGRATION LOGIC ---
 
 def main():
+    """Main function to run the migration from the Excel file."""
     if not os.path.exists(EXCEL_FILE_PATH):
-        print(colored(f"Error: Excel file not found at '{EXCEL_FILE_PATH}'. Make sure it's in the same folder.", "red"))
+        print(colored(f"Error: Excel file not found at '{EXCEL_FILE_PATH}'.", "red"))
         return
         
     if not os.path.exists(MOVIES_DIR):
@@ -86,25 +94,27 @@ def main():
 
     print(colored(f"--- Starting Migration from {EXCEL_FILE_PATH} ---", "magenta"))
     
-    # Read the Excel file, assuming the first row is the header
+    # Read the specified Excel file into a pandas DataFrame.
     df = pd.read_excel(EXCEL_FILE_PATH)
     
-    # --- FIX #2: Access columns by POSITION to avoid name errors ---
-    # Print the column headers that pandas found, for debugging.
+    # A helpful debug line to show the user what columns pandas has identified.
     print(colored(f"Found columns: {df.columns.tolist()}", "blue"))
 
+    # Iterate over each row in the Excel sheet.
     for index, row in df.iterrows():
-        # Use .iloc[1] to get data from the SECOND column (Movie Title)
-        # Use .iloc[2] to get data from the THIRD column (Status)
+        # Access data by column POSITION (e.g., iloc[1] is the 2nd column).
+        # This is more robust than using names, which can have typos.
+        # Your Excel file should have: Title in Column B, Status in Column C.
         try:
             name_str = str(row.iloc[1]).strip()
             status_raw = row.iloc[2]
         except IndexError:
-            print(colored(f"  -> Could not read columns for row {index + 1}. Skipping.", "yellow"))
+            print(colored(f"  -> Row {index + 1} is missing columns. Skipping.", "yellow"))
             continue
 
         print(colored(f"\nProcessing row {index + 1}: {name_str}", "cyan"))
 
+        # Use regex to parse the year from the title string (e.g., "Parasite (2019)").
         match = re.search(r'\((\d{4})\)$', name_str)
         if match:
             year = match.group(1)
@@ -113,12 +123,15 @@ def main():
             title = name_str
             year = None
             
+        # Skip rows that are empty or couldn't be parsed.
         if not title or title.lower() == 'nan':
             print(colored("  -> No title found. Skipping row.", "yellow"))
             continue
             
+        # Determine the movie's status. Defaults to 'to-watch' if not specified.
         status = 'watched' if pd.notna(status_raw) and str(status_raw).strip() == 'watched' else 'to-watch'
 
+        # Search the TMDB API and create the corresponding markdown file.
         try:
             search_params = {"api_key": TMDB_API_KEY, "query": title}
             if year:
@@ -132,6 +145,7 @@ def main():
                 print(colored(f"  -> No API results found for '{title} ({year})'. Skipping.", "red"))
                 continue
             
+            # Assume the first search result is the correct one for automation.
             movie_id = results[0]['id']
             print(f"  -> Found TMDB match: {results[0]['title']} ({results[0].get('release_date', 'N/A')[:4]})")
             
@@ -141,12 +155,15 @@ def main():
 
             create_markdown_file(full_details, director, actors, status)
             
+            # A short delay to be respectful of the TMDB API rate limits.
             time.sleep(0.25) 
 
         except Exception as e:
-            print(colored(f"  -> An error occurred for '{title}': {e}", "red"))
+            print(colored(f"  -> An error occurred while processing '{title}': {e}", "red"))
 
     print(colored("\n--- Migration Complete ---", "magenta"))
 
+
+# Standard entry point to run the script.
 if __name__ == "__main__":
     main()
